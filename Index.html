@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hockey Stat Sheet</title>
+<style>
+body { font-family: system-ui; margin:0 }
+nav { display:flex; gap:8px; padding:10px; background:#111 }
+nav button { color:#fff; background:#333; border:none; padding:8px }
+section { display:none; padding:12px }
+section.active { display:block }
+.log { max-height:180px; overflow:auto; border:1px solid #ccc; padding:6px }
+.scoreboard { font-size:18px; margin:8px 0 }
+.hidden { display:none }
+</style>
+</head>
+<body>
+
+<nav>
+  <button id="tabSeasons">Seasons</button>
+  <button id="tabTeams">Teams</button>
+  <button id="tabGame">Game</button>
+</nav>
+
+<section id="seasonsSection">
+  <h2>Seasons</h2>
+  <input id="seasonName" placeholder="Season name">
+  <button id="addSeasonBtn">Add Season</button>
+  <ul id="seasonList"></ul>
+</section>
+
+<section id="teamsSection">
+  <h2>Teams</h2>
+  <input id="teamName" placeholder="Team name">
+  <input id="teamAbbr" placeholder="Abbr" maxlength="3">
+  <button id="addTeamBtn">Add Team</button>
+  <ul id="teamList"></ul>
+
+  <h3>Roster</h3>
+  <select id="rosterTeamSelect"></select><br>
+  <input id="playerName" placeholder="Player name">
+  <input id="playerNumber" type="number" placeholder="#">
+  <select id="playerPos">
+    <option>F</option>
+    <option>D</option>
+    <option>G</option>
+  </select>
+  <button id="addPlayerBtn">Add Player</button>
+  <ul id="rosterList"></ul>
+</section>
+
+<section id="gameSection">
+  <h2>New Game</h2>
+  <select id="homeTeam"></select>
+  <select id="awayTeam"></select>
+  <button id="startGameBtn">Start Game</button>
+
+  <div id="liveGame" class="hidden">
+    <div class="scoreboard">
+      <strong id="periodLabel">Period 1</strong><br>
+      <span id="homeScore">0</span> - <span id="awayScore">0</span><br>
+      Shots <span id="homeShots">0</span> - <span id="awayShots">0</span><br>
+      Clock <span id="clockDisplay">20:00</span>
+    </div>
+
+    <button id="tickClockBtn">-1 min</button>
+    <button id="nextPeriodBtn">Advance Period</button>
+
+    <h4>Goal</h4>
+    <select id="goalTeam"></select>
+    <select id="goalScorer"></select>
+    <select id="goalA1"></select>
+    <select id="goalA2"></select>
+    <select id="goalStrength">
+      <option>EV</option>
+      <option>PP</option>
+      <option>SH</option>
+      <option>EN</option>
+      <option>PS</option>
+    </select>
+    <button id="addGoalBtn">Add Goal</button>
+
+    <h4>Shot</h4>
+    <select id="shotTeam"></select>
+    <select id="shotPlayer"></select>
+    <button id="addShotBtn">Add Shot</button>
+
+    <h4>Penalty</h4>
+    <select id="penTeam"></select>
+    <select id="penPlayer"></select>
+    <select id="penType">
+      <option>Tripping</option>
+      <option>Slashing</option>
+      <option>Hooking</option>
+      <option>Interference</option>
+      <option>Roughing</option>
+      <option>Boarding</option>
+      <option>High-sticking</option>
+      <option>Cross-checking</option>
+      <option>Misconduct</option>
+    </select>
+    <select id="penMinutes">
+      <option value="2">2</option>
+      <option value="5">5</option>
+      <option value="10">10</option>
+    </select>
+    <button id="addPenaltyBtn">Add Penalty</button>
+
+    <h4>Goal Log</h4>
+    <div id="goalLog" class="log"></div>
+
+    <h4>Penalty Log</h4>
+    <div id="penaltyLog" class="log"></div>
+  </div>
+</section>
+
+<script>
+const state={seasons:[],activeSeasonId:null,currentGame:null};
+const save=()=>localStorage.setItem("hockeyApp",JSON.stringify(state));
+const load=()=>{const d=localStorage.getItem("hockeyApp"); if(d) Object.assign(state,JSON.parse(d));};
+
+const fmt=t=>`${Math.floor(t/60)}:${String(t%60).padStart(2,"0")}`;
+const show=id=>{
+  document.querySelectorAll("section").forEach(s=>s.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+};
+
+const findPlayer=(team,id)=>team.roster.find(p=>p.id===id)?.name||"";
+
+function renderSeasons(){
+  seasonList.innerHTML="";
+  state.seasons.forEach(s=>{
+    const li=document.createElement("li");
+    li.textContent=s.name;
+    li.onclick=()=>{state.activeSeasonId=s.id; renderTeams();};
+    seasonList.appendChild(li);
+  });
+}
+
+function renderTeams(){
+  const s=state.seasons.find(x=>x.id===state.activeSeasonId);
+  if(!s) return;
+  teamList.innerHTML="";
+  [homeTeam,awayTeam,rosterTeamSelect].forEach(sel=>{
+    sel.innerHTML="";
+    s.teams.forEach(t=>sel.appendChild(new Option(t.name,t.id)));
+  });
+  s.teams.forEach(t=>{
+    teamList.appendChild(Object.assign(document.createElement("li"),{
+      textContent:`${t.name} (${t.abbr})`
+    }));
+  });
+  renderRoster();
+}
+
+function renderRoster(){
+  const s=state.seasons.find(x=>x.id===state.activeSeasonId);
+  const t=s?.teams.find(x=>x.id===rosterTeamSelect.value);
+  rosterList.innerHTML="";
+  t?.roster.forEach(p=>{
+    rosterList.appendChild(Object.assign(document.createElement("li"),{
+      textContent:`#${p.num||""} ${p.name} (${p.pos||""})`
+    }));
+  });
+}
+
+function updatePeriodLabel(){
+  const g=state.currentGame;
+  periodLabel.textContent = g.phase==="OT" ? "OT" : `Period ${g.period}`;
+}
+
+function resetClock(){
+  const g=state.currentGame;
+  g.clock = g.phase==="OT" ? 300 : 1200;
+  clockDisplay.textContent = fmt(g.clock);
+}
+
+function startGame(){
+  const s=state.seasons.find(x=>x.id===state.activeSeasonId);
+  state.currentGame={
+    home:s.teams.find(t=>t.id===homeTeam.value),
+    away:s.teams.find(t=>t.id===awayTeam.value),
+    homeScore:0,
+    awayScore:0,
+    period:1,
+    phase:"REG",
+    clock:1200,
+    shots:[],
+    goals:[],
+    penalties:[]
+  };
+  liveGame.classList.remove("hidden");
+  updatePeriodLabel();
+  resetClock();
+  populateSelectors();
+  updateScoreboard();
+}
+
+function populateSelectors(){
+  [goalTeam,shotTeam,penTeam].forEach(sel=>{
+    sel.innerHTML="";
+    [state.currentGame.home,state.currentGame.away]
+      .forEach(t=>sel.appendChild(new Option(t.name,t.id)));
+  });
+  goalTeam.onchange=populateGoalPlayers;
+  shotTeam.onchange=populateShotPlayers;
+  penTeam.onchange=populatePenaltyPlayers;
+  populateGoalPlayers();
+  populateShotPlayers();
+  populatePenaltyPlayers();
+}
+
+function populateGoalPlayers(){
+  const t=[state.currentGame.home,state.currentGame.away]
+    .find(x=>x.id===goalTeam.value);
+  [goalScorer,goalA1,goalA2].forEach(sel=>{
+    sel.innerHTML="<option></option>";
+    t.roster.forEach(p=>sel.appendChild(new Option(p.name,p.id)));
+  });
+}
+
+function populateShotPlayers(){
+  const t=[state.currentGame.home,state.currentGame.away]
+    .find(x=>x.id===shotTeam.value);
+  shotPlayer.innerHTML="<option></option>";
+  t.roster.forEach(p=>shotPlayer.appendChild(new Option(p.name,p.id)));
+}
+
+function populatePenaltyPlayers(){
+  const t=[state.currentGame.home,state.currentGame.away]
+    .find(x=>x.id===penTeam.value);
+  penPlayer.innerHTML="<option></option>";
+  t.roster.forEach(p=>penPlayer.appendChild(new Option(p.name,p.id)));
+}
+
+function addGoal(){
+  const g=state.currentGame;
+  g.goals.push({
+    teamId:goalTeam.value,
+    scorer:goalScorer.value,
+    a1:goalA1.value,
+    a2:goalA2.value,
+    strength:goalStrength.value,
+    period:g.period,
+    time:g.clock
+  });
+  if(goalTeam.value===g.home.id) g.homeScore++;
+  else g.awayScore++;
+  updateScoreboard();
+  renderGoalLog();
+}
+
+function renderGoalLog(){
+  goalLog.innerHTML="";
+  state.currentGame.goals.forEach(g=>{
+    const team = g.teamId===state.currentGame.home.id
+      ? state.currentGame.home
+      : state.currentGame.away;
+    const assists=[findPlayer(team,g.a1),findPlayer(team,g.a2)].filter(Boolean).join(", ");
+    goalLog.appendChild(Object.assign(document.createElement("div"),{
+      textContent:`P${g.period} ${fmt(g.time)} ${team.abbr} ${findPlayer(team,g.scorer)}${assists?` (${assists})`:""} ${g.strength}`
+    }));
+  });
+}
+
+function addShot(){
+  const g=state.currentGame;
+  g.shots.push({teamId:shotTeam.value});
+  updateScoreboard();
+}
+
+function addPenalty(){
+  const g=state.currentGame;
+  g.penalties.push({
+    teamId:penTeam.value,
+    playerId:penPlayer.value,
+    type:penType.value,
+    minutes:+penMinutes.value,
+    period:g.period
+  });
+  renderPenaltyLog();
+}
+
+function renderPenaltyLog(){
+  penaltyLog.innerHTML="";
+  state.currentGame.penalties.forEach(p=>{
+    penaltyLog.appendChild(Object.assign(document.createElement("div"),{
+      textContent:`P${p.period} ${p.type} (${p.minutes} min)`
+    }));
+  });
+}
+
+function updateScoreboard(){
+  const g=state.currentGame;
+  homeScore.textContent=g.homeScore;
+  awayScore.textContent=g.awayScore;
+  homeShots.textContent=g.shots.filter(s=>s.teamId===g.home.id).length;
+  awayShots.textContent=g.shots.filter(s=>s.teamId===g.away.id).length;
+}
+
+function tickClock(){
+  state.currentGame.clock=Math.max(0,state.currentGame.clock-60);
+  clockDisplay.textContent=fmt(state.currentGame.clock);
+}
+
+document.addEventListener("DOMContentLoaded",()=>{
+  load();
+  tabSeasons.onclick=()=>show("seasonsSection");
+  tabTeams.onclick=()=>show("teamsSection");
+  tabGame.onclick=()=>show("gameSection");
+
+  addSeasonBtn.onclick=()=>{
+    state.seasons.push({id:crypto.randomUUID(),name:seasonName.value,teams:[]});
+    state.activeSeasonId=state.seasons.at(-1).id;
+    save(); renderSeasons(); renderTeams();
+  };
+
+  addTeamBtn.onclick=()=>{
+    state.seasons.find(s=>s.id===state.activeSeasonId)
+      .teams.push({id:crypto.randomUUID(),name:teamName.value,abbr:teamAbbr.value,roster:[]});
+    save(); renderTeams();
+  };
+
+  addPlayerBtn.onclick=()=>{
+    const s=state.seasons.find(x=>x.id===state.activeSeasonId);
+    s.teams.find(t=>t.id===rosterTeamSelect.value)
+      .roster.push({id:crypto.randomUUID(),name:playerName.value,num:playerNumber.value,pos:playerPos.value});
+    save(); renderRoster();
+  };
+
+  rosterTeamSelect.onchange=renderRoster;
+  startGameBtn.onclick=startGame;
+  tickClockBtn.onclick=tickClock;
+  nextPeriodBtn.onclick=()=>{state.currentGame.period++; resetClock(); updatePeriodLabel();};
+  addGoalBtn.onclick=addGoal;
+  addShotBtn.onclick=addShot;
+  addPenaltyBtn.onclick=addPenalty;
+
+  renderSeasons();
+  show("seasonsSection");
+});
+</script>
+</body>
+</html>
